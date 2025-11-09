@@ -9,6 +9,19 @@ const cors = require('cors');
 
 const app = express();
 app.use(cors({ origin: '*' })); // <-- tighten in production
+// ---------- ADD THIS BLOCK ----------
+app.get('/', (req, res) => {
+  res.send(`
+    <h1>Upload Server is LIVE! 🚀</h1>
+    <p>POST files to: <code>/upload</code></p>
+    <p>Files served from: <code>/uploads/</code></p>
+    <hr>
+    <pre>curl -F "file=@photo.jpg" ${req.protocol}://${req.get(
+    'host',
+  )}/upload</pre>
+  `);
+});
+// ------------------------------------
 app.use(express.json());
 
 // ---------- 1. Storage ----------
