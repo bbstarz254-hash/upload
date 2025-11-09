@@ -56,12 +56,13 @@ app.use('/uploads', express.static(uploadDir));
 app.post('/upload', upload.single('file'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
 
-  const publicUrl = `${req.protocol}://${req.get('host')}/uploads/${
-    req.file.filename
-  }`;
+  // FORCE HTTPS (critical for CSP)
+  const protocol = req.get('x-forwarded-proto') || req.protocol;
+  const host = req.get('host');
+  const publicUrl = `https://${host}/uploads/${req.file.filename}`;
+
   res.json({ url: publicUrl, name: req.file.originalname });
 });
-
 // ---------- 4. Health ----------
 app.get('/health', (req, res) => res.send('OK'));
 
