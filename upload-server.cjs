@@ -1,5 +1,5 @@
 // ---------------------------------------------------
-// upload-server.cjs (Cloudinary version – PUBLIC uploads)
+// upload-server.cjs (Cloudinary version – PUBLIC uploads, PDFs/docs as raw)
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
@@ -12,7 +12,7 @@ const app = express();
 app.use(cors({ origin: '*' }));
 app.use(express.json());
 
-// ---------- CONFIGURE CLOUDINARY (use env vars!) ----------
+// ---------- CONFIGURE CLOUDINARY ----------
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'your_cloud_name',
   api_key: process.env.CLOUDINARY_API_KEY || 'your_api_key',
@@ -24,11 +24,11 @@ app.get('/', (req, res) => {
   res.send(`
     <h1>Upload Server + Cloudinary 🚀</h1>
     <p><strong>POST</strong> files to: <code>/upload</code></p>
-    <p>Files stored on Cloudinary (public delivery)</p>
+    <p>Files stored on Cloudinary (public delivery). PDFs/docs uploaded as raw.</p>
   `);
 });
 
-// ---------- TEMP STORAGE (multer still saves temp file) ----------
+// ---------- TEMP STORAGE (multer) ----------
 const uploadDir = path.join(__dirname, 'temp_uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -41,7 +41,7 @@ const storage = multer.diskStorage({
   },
 });
 
-// Simple, conservative MIME whitelist
+// Allowed MIME types
 const ALLOWED_MIME = [
   'image/jpeg',
   'image/jpg',
@@ -63,29 +63,37 @@ const ALLOWED_MIME = [
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
-  fileFilter: (req, file, cb) => {
-    const ok = ALLOWED_MIME.includes(file.mimetype);
-    cb(null, ok);
-  },
+  limits: { fileSize: 100 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => cb(null, ALLOWED_MIME.includes(file.mimetype)),
 });
 
-// ---------- UPLOAD ENDPOINT (PUBLIC URL) ----------
+// ---------- UPLOAD ENDPOINT ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    // Upload to Cloudinary as public (type: 'upload' is the public default)
+    // Determine Cloudinary resource_type
+    let resourceType = 'auto'; // default
+    const ext = path.extname(req.file.originalname).toLowerCase();
+    if (
+      ext === '.pdf' ||
+      ext === '.doc' ||
+      ext === '.docx' ||
+      ext === '.txt' ||
+      ext === '.csv'
+    ) {
+      resourceType = 'raw'; // force raw for documents
+    }
+
     const result = await cloudinary.uploader.upload(req.file.path, {
-      resource_type: 'auto', // detects images, videos, raw (pdf/docx) automatically
+      resource_type: resourceType,
       folder: 'yourapp_uploads',
-      type: 'upload', // explicit: public delivery
+      type: 'upload', // public delivery
     });
 
-    // Return useful metadata to client
     res.json({
-      url: result.secure_url, // public HTTPS URL (CDN)
-      public_id: result.public_id, // Cloudinary public_id (folder + name)
+      url: result.secure_url,
+      public_id: result.public_id,
       resource_type: result.resource_type,
       original_filename: req.file.originalname,
     });
@@ -93,11 +101,9 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     console.error('Cloudinary upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
   } finally {
-    // Always try to remove the temp file if it exists
     try {
-      if (req.file?.path && fs.existsSync(req.file.path)) {
+      if (req.file?.path && fs.existsSync(req.file.path))
         fs.unlinkSync(req.file.path);
-      }
     } catch (e) {
       console.warn('Failed to remove temp file:', e);
     }
@@ -107,5 +113,6 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // ---------- HEALTH ----------
 app.get('/health', (req, res) => res.send('OK'));
 
+// ---------- START SERVER ----------
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Upload server listening on ${PORT}`));
