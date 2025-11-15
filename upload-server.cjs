@@ -1,5 +1,6 @@
 // ---------------------------------------------------
 // upload-server.cjs  (Cloudinary – FREE persistent storage)
+// Updated: November 15, 2025 06:40 PM EAT (KE)
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
@@ -19,7 +20,7 @@ app.use(
       'https://your-app.vercel.app', // ← REPLACE with your real domain
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['ContentIp', 'X-User-Id'],
+    allowedHeaders: ['Content-Type', 'X-User-Id'], // ← Fixed typo: ContentIp → Content-Type
     credentials: false,
   }),
 );
@@ -38,6 +39,7 @@ app.get('/', (req, res) => {
     <p>POST to: <code>/upload</code></p>
     <p>Files stored <strong>forever</strong> on Cloudinary (free tier)</p>
     <p><strong>Status:</strong> <span style="color:green">OK</span></p>
+    <p><strong>Updated:</strong> Nov 15, 2025 06:40 PM EAT</p>
   `);
 });
 
@@ -66,20 +68,24 @@ const upload = multer({
   },
 });
 
-// ---------- UPLOAD ENDPOINT (UNSIGNED PUBLIC) ----------
+// ---------- UPLOAD ENDPOINT (FORCE PUBLIC + OVERWRITE) ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
   try {
+    const publicId = `yourapp_uploads/${req.file.filename}`;
+
     const result = await cloudinary.uploader.upload(req.file.path, {
       resource_type: 'auto',
       folder: 'yourapp_uploads',
       upload_preset: 'public_uploads', // ← MUST BE UNSIGNED
+      public_id: req.file.filename, // ← Force same name
+      overwrite: true, // ← Overwrite old private version
       use_filename: true,
       unique_filename: false,
-      overwrite: true,
+      access_mode: 'public', // ← FORCE PUBLIC
     });
 
     // Clean up temp file
