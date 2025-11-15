@@ -1,6 +1,6 @@
 // ---------------------------------------------------
 // upload-server.cjs  (Cloudinary – FREE persistent storage)
-// Updated: November 15, 2025 06:40 PM EAT (KE)
+// Updated: November 15, 2025 – Forces public delivery for signed uploads
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
@@ -20,7 +20,7 @@ app.use(
       'https://your-app.vercel.app', // ← REPLACE with your real domain
     ],
     methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-User-Id'], // ← Fixed typo: ContentIp → Content-Type
+    allowedHeaders: ['Content-Type', 'X-User-Id'], // Fixed: Content-Type
     credentials: false,
   }),
 );
@@ -39,7 +39,6 @@ app.get('/', (req, res) => {
     <p>POST to: <code>/upload</code></p>
     <p>Files stored <strong>forever</strong> on Cloudinary (free tier)</p>
     <p><strong>Status:</strong> <span style="color:green">OK</span></p>
-    <p><strong>Updated:</strong> Nov 15, 2025 06:40 PM EAT</p>
   `);
 });
 
@@ -68,24 +67,22 @@ const upload = multer({
   },
 });
 
-// ---------- UPLOAD ENDPOINT (FORCE PUBLIC + OVERWRITE) ----------
+// ---------- UPLOAD ENDPOINT (SIGNED + FORCE PUBLIC DELIVERY) ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
   try {
-    const publicId = `yourapp_uploads/${req.file.filename}`;
-
     const result = await cloudinary.uploader.upload(req.file.path, {
       resource_type: 'auto',
       folder: 'yourapp_uploads',
-      upload_preset: 'public_uploads', // ← MUST BE UNSIGNED
-      public_id: req.file.filename, // ← Force same name
-      overwrite: true, // ← Overwrite old private version
+      upload_preset: 'signed_public', // ← Use SIGNED preset for server uploads
       use_filename: true,
       unique_filename: false,
-      access_mode: 'public', // ← FORCE PUBLIC
+      overwrite: true, // Overwrite old private versions
+      access_mode: 'public', // Force public access
+      eager: [{ format: 'jpg' }], // Dummy transformation to trigger public metadata
     });
 
     // Clean up temp file
@@ -99,7 +96,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     });
   } catch (err) {
     console.error('Cloudinary upload failed:', err);
-    res.status(500).json({ error: 'Upload failed' });
+    res.status(500).json({ error: 'Upload failed: ' + err.message });
   }
 });
 
