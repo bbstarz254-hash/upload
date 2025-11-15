@@ -85,65 +85,40 @@ app.post('/upload', upload.single('file'), async (req, res) => {
   }
 });
 // ---------- PROXY DOWNLOAD (FIXED: Handles 401 + Streams) ----------
+// ---------- PROXY WITH SIGNED URL (For Private Files) ----------
 app.get('/proxy', async (req, res) => {
   const { url } = req.query;
-
-  // Validate URL
-  if (!url || !url.includes('res.cloudinary.com')) {
-    return res.status(400).json({ error: 'Invalid or missing Cloudinary URL' });
+  if (!url?.includes('res.cloudinary.com')) {
+    return res.status(400).json({ error: 'Invalid URL' });
   }
 
   try {
-    console.log(`[Proxy] Fetching: ${url}`);
+    // Parse public_id and resource_type from URL
+    const publicId = url.split('/upload/')[1]?.split('/')[0]; // e.g., "v123/yourapp_uploads/filename"
+    const resourceType = url.includes('/image/upload/')
+      ? 'image'
+      : url.includes('/video/upload/')
+      ? 'video'
+      : 'raw'; // For PDF/DOCX
 
-    // Fetch with full headers (handles CORS, auth)
-    const cloudResponse = await fetch(url, {
-      method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+    if (!publicId) throw new Error('Invalid Cloudinary URL');
+
+    // Generate SIGNED URL (expires in 1 hour)
+    const signedUrl = cloudinary.utils.private_download_url(
+      publicId,
+      'pdf', // Or detect from URL
+      {
+        resource_type: resourceType,
+        attachment: true, // Force download
+        expires_at: Math.floor(Date.now() / 1000) + 3600, // 1 hour
       },
-    });
+    );
 
-    if (!cloudResponse.ok) {
-      console.error(
-        `[Proxy] Cloudinary responded: ${cloudResponse.status} ${cloudResponse.statusText}`,
-      );
-      return res.status(cloudResponse.status).json({
-        error: `Download failed: ${cloudResponse.status} ${cloudResponse.statusText}`,
-      });
-    }
-
-    // Get content type (fallback for PDFs)
-    const contentType =
-      cloudResponse.headers.get('content-type') || 'application/pdf';
-
-    // Get filename from URL (fallback to 'download')
-    const filename = decodeURIComponent(url.split('/').pop()) || 'download';
-
-    // Set response headers
-    res.set({
-      'Content-Type': contentType,
-      'Content-Disposition': `attachment; filename="${filename}"`,
-      'Content-Length':
-        cloudResponse.headers.get('content-length') || undefined,
-    });
-
-    // Pipe the stream (handles large files)
-    cloudResponse.body.pipe(res);
-
-    // Handle pipe errors
-    cloudResponse.body.on('error', (err) => {
-      console.error('[Proxy] Stream error:', err);
-      if (!res.headersSent) res.status(500).json({ error: 'Stream failed' });
-    });
-
-    res.on('error', (err) => {
-      console.error('[Proxy] Response error:', err);
-    });
+    // Redirect to signed URL (simple & secure)
+    res.redirect(302, signedUrl);
   } catch (err) {
-    console.error('[Proxy] Fetch error:', err.message);
-    res.status(500).json({ error: 'Proxy failed: ' + err.message });
+    console.error('[Proxy] Signed URL error:', err);
+    res.status(500).json({ error: 'Download failed' });
   }
 });
 // ---------- HEALTH ----------
