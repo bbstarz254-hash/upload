@@ -1,50 +1,35 @@
 // ---------------------------------------------------
-// upload-server.cjs  (Cloudinary – FREE persistent storage)
-// Updated: November 15, 2025 – Forces public delivery for signed uploads
+// upload-server.cjs (Cloudinary version – FREE persistent storage)
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-const cloudinary = require('cloudinary').v2;
+const cloudinary = require('cloudinary').v2; // <-- NEW
 
 const app = express();
+app.use(cors({ origin: '*' }));
 
-// ---------- CORS: Allow localhost + production ----------
-app.use(
-  cors({
-    origin: [
-      'http://localhost:3000', // Dev
-      'https://fanbox-e0056.firebaseapp.com', // Firebase Hosting
-      'https://your-app.vercel.app', // ← REPLACE with your real domain
-    ],
-    methods: ['GET', 'POST', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'X-User-Id'], // Fixed: Content-Type
-    credentials: false,
-  }),
-);
-
-// ---------- CLOUDINARY CONFIG (env vars only!) ----------
+// ---------- CONFIGURE CLOUDINARY (use env vars!) ----------
 cloudinary.config({
-  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
-  api_key: process.env.CLOUDINARY_API_KEY,
-  api_secret: process.env.CLOUDINARY_API_SECRET,
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME || 'your_cloud_name',
+  api_key: process.env.CLOUDINARY_API_KEY || 'your_api_key',
+  api_secret: process.env.CLOUDINARY_API_SECRET || 'your_api_secret',
 });
 
 // ---------- HOME PAGE ----------
 app.get('/', (req, res) => {
   res.send(`
-    <h1>Upload Server + Cloudinary</h1>
-    <p>POST to: <code>/upload</code></p>
-    <p>Files stored <strong>forever</strong> on Cloudinary (free tier)</p>
-    <p><strong>Status:</strong> <span style="color:green">OK</span></p>
+    <h1>Upload Server + Cloudinary 🚀</h1>
+    <p><strong>POST</strong> files to: <code>/upload</code></p>
+    <p>Files stored forever on Cloudinary (free tier)</p>
   `);
 });
 
 app.use(express.json());
 
-// ---------- TEMP STORAGE ----------
+// ---------- TEMP STORAGE (multer still saves temp file) ----------
 const uploadDir = path.join(__dirname, 'temp_uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -59,53 +44,36 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB (Cloudinary free limit)
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp|pdf|docx|txt|mp4|webm|mp3|mov/i;
-    const pass = allowed.test(file.mimetype);
-    cb(null, pass);
+    const allowed = /jpeg|jpg|png|gif|webp|pdf|docx|txt|mp4|webm|mp3|mov/;
+    cb(null, allowed.test(file.mimetype));
   },
 });
 
-// ---------- UPLOAD ENDPOINT (SIGNED + FORCE PUBLIC DELIVERY) ----------
+// ---------- UPLOAD ENDPOINT (now uses Cloudinary) ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
-  }
+  if (!req.file) return res.status(400).json({ error: 'No file' });
 
   try {
     const result = await cloudinary.uploader.upload(req.file.path, {
-      resource_type: 'auto',
-      folder: 'yourapp_uploads',
-      upload_preset: 'signed_public', // ← Use SIGNED preset for server uploads
-      use_filename: true,
-      unique_filename: false,
-      overwrite: true, // Overwrite old private versions
-      access_mode: 'public', // Force public access
-      eager: [{ format: 'jpg' }], // Dummy transformation to trigger public metadata
+      resource_type: 'auto', // auto-detect image/video/raw
+      folder: 'yourapp_uploads', // optional folder
     });
 
-    // Clean up temp file
-    fs.unlink(req.file.path, (err) => {
-      if (err) console.warn('Failed to delete temp file:', err);
-    });
+    // Delete temp file
+    fs.unlinkSync(req.file.path);
 
-    res.json({
-      url: result.secure_url,
-      name: req.file.originalname,
-    });
+    // Return secure HTTPS URL
+    res.json({ url: result.secure_url, name: req.file.originalname });
   } catch (err) {
-    console.error('Cloudinary upload failed:', err);
-    res.status(500).json({ error: 'Upload failed: ' + err.message });
+    console.error('Cloudinary upload error:', err);
+    res.status(500).json({ error: 'Upload failed' });
   }
 });
 
-// ---------- HEALTH CHECK ----------
-app.get('/health', (req, res) => res.status(200).send('OK'));
+// ---------- HEALTH ----------
+app.get('/health', (req, res) => res.send('OK'));
 
-// ---------- START SERVER ----------
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Upload server running on port ${PORT}`);
-  console.log(`Health: http://localhost:${PORT}/health`);
-});
+app.listen(PORT, () => console.log(`Upload server listening on ${PORT}`));
