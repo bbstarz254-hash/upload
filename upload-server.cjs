@@ -1,5 +1,5 @@
 // ---------------------------------------------------
-// upload-server.cjs (Cloudinary version – PUBLIC uploads, PDFs/docs as raw)
+// upload-server.cjs (Cloudinary version – PUBLIC uploads)
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
@@ -24,11 +24,11 @@ app.get('/', (req, res) => {
   res.send(`
     <h1>Upload Server + Cloudinary 🚀</h1>
     <p><strong>POST</strong> files to: <code>/upload</code></p>
-    <p>Files stored on Cloudinary (public delivery). PDFs/docs uploaded as raw.</p>
+    <p>Files stored on Cloudinary with public delivery</p>
   `);
 });
 
-// ---------- TEMP STORAGE (multer) ----------
+// ---------- TEMP STORAGE ----------
 const uploadDir = path.join(__dirname, 'temp_uploads');
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
@@ -41,7 +41,6 @@ const storage = multer.diskStorage({
   },
 });
 
-// Allowed MIME types
 const ALLOWED_MIME = [
   'image/jpeg',
   'image/jpg',
@@ -63,32 +62,31 @@ const ALLOWED_MIME = [
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 },
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
   fileFilter: (req, file, cb) => cb(null, ALLOWED_MIME.includes(file.mimetype)),
 });
 
-// ---------- UPLOAD ENDPOINT ----------
+// ---------- UPLOAD ENDPOINT (PUBLIC URL) ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    // Determine Cloudinary resource_type
-    let resourceType = 'auto'; // default
-    const ext = path.extname(req.file.originalname).toLowerCase();
-    if (
-      ext === '.pdf' ||
-      ext === '.doc' ||
-      ext === '.docx' ||
-      ext === '.txt' ||
-      ext === '.csv'
-    ) {
-      resourceType = 'raw'; // force raw for documents
-    }
+    // Detect type automatically for images, videos, docs
+    let resourceType = 'auto';
+    const docTypes = [
+      'application/pdf',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'text/plain',
+      'text/csv',
+    ];
+    if (docTypes.includes(req.file.mimetype)) resourceType = 'raw';
 
     const result = await cloudinary.uploader.upload(req.file.path, {
       resource_type: resourceType,
       folder: 'yourapp_uploads',
       type: 'upload', // public delivery
+      access_mode: 'public', // 🔑 ensure raw/docs are public
     });
 
     res.json({
@@ -101,6 +99,7 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     console.error('Cloudinary upload error:', err);
     res.status(500).json({ error: 'Upload failed' });
   } finally {
+    // Clean up temp file
     try {
       if (req.file?.path && fs.existsSync(req.file.path))
         fs.unlinkSync(req.file.path);
@@ -113,6 +112,5 @@ app.post('/upload', upload.single('file'), async (req, res) => {
 // ---------- HEALTH ----------
 app.get('/health', (req, res) => res.send('OK'));
 
-// ---------- START SERVER ----------
 const PORT = process.env.PORT || 4000;
 app.listen(PORT, () => console.log(`Upload server listening on ${PORT}`));
