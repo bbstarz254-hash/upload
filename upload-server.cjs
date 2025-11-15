@@ -52,22 +52,35 @@ const upload = multer({
 });
 
 // ---------- UPLOAD ENDPOINT (now uses Cloudinary) ----------
+// ---------- UPLOAD ENDPOINT (PUBLIC URL) ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file' });
 
   try {
     const result = await cloudinary.uploader.upload(req.file.path, {
-      resource_type: 'auto', // auto-detect image/video/raw
-      folder: 'yourapp_uploads', // optional folder
+      resource_type: 'auto', // PDF, video, docx, etc.
+      folder: 'yourapp_uploads',
+      // IMPORTANT: Make the asset PUBLIC
+      access_mode: 'public', // <-- ADD THIS
+      // OR use: type: 'upload' (default is public)
     });
 
-    // Delete temp file
+    // Clean up temp file
     fs.unlinkSync(req.file.path);
 
-    // Return secure HTTPS URL
-    res.json({ url: result.secure_url, name: req.file.originalname });
+    // RETURN A **PUBLIC** URL (no signature needed)
+    const publicUrl = result.secure_url; // safe because access_mode: 'public'
+
+    res.json({
+      url: publicUrl,
+      name: req.file.originalname,
+    });
   } catch (err) {
     console.error('Cloudinary upload error:', err);
+    // Optional: clean up on error
+    if (req.file?.path && fs.existsSync(req.file.path)) {
+      fs.unlinkSync(req.file.path);
+    }
     res.status(500).json({ error: 'Upload failed' });
   }
 });
