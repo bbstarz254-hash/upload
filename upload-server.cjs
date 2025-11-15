@@ -84,23 +84,66 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     res.status(500).json({ error: 'Upload failed' });
   }
 });
+// ---------- PROXY DOWNLOAD (FIXED: Handles 401 + Streams) ----------
 app.get('/proxy', async (req, res) => {
   const { url } = req.query;
-  if (!url?.includes('res.cloudinary.com'))
-    return res.status(400).send('Invalid');
+
+  // Validate URL
+  if (!url || !url.includes('res.cloudinary.com')) {
+    return res.status(400).json({ error: 'Invalid or missing Cloudinary URL' });
+  }
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error('Fetch failed');
-    const blob = await response.blob();
-    res.set('Content-Type', blob.type);
-    res.set(
-      'Content-Disposition',
-      `attachment; filename="${decodeURIComponent(url.split('/').pop())}"`,
-    );
-    response.body.pipe(res);
+    console.log(`[Proxy] Fetching: ${url}`);
+
+    // Fetch with full headers (handles CORS, auth)
+    const cloudResponse = await fetch(url, {
+      method: 'GET',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+
+    if (!cloudResponse.ok) {
+      console.error(
+        `[Proxy] Cloudinary responded: ${cloudResponse.status} ${cloudResponse.statusText}`,
+      );
+      return res.status(cloudResponse.status).json({
+        error: `Download failed: ${cloudResponse.status} ${cloudResponse.statusText}`,
+      });
+    }
+
+    // Get content type (fallback for PDFs)
+    const contentType =
+      cloudResponse.headers.get('content-type') || 'application/pdf';
+
+    // Get filename from URL (fallback to 'download')
+    const filename = decodeURIComponent(url.split('/').pop()) || 'download';
+
+    // Set response headers
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': `attachment; filename="${filename}"`,
+      'Content-Length':
+        cloudResponse.headers.get('content-length') || undefined,
+    });
+
+    // Pipe the stream (handles large files)
+    cloudResponse.body.pipe(res);
+
+    // Handle pipe errors
+    cloudResponse.body.on('error', (err) => {
+      console.error('[Proxy] Stream error:', err);
+      if (!res.headersSent) res.status(500).json({ error: 'Stream failed' });
+    });
+
+    res.on('error', (err) => {
+      console.error('[Proxy] Response error:', err);
+    });
   } catch (err) {
-    res.status(500).send('Download failed');
+    console.error('[Proxy] Fetch error:', err.message);
+    res.status(500).json({ error: 'Proxy failed: ' + err.message });
   }
 });
 // ---------- HEALTH ----------
