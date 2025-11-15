@@ -9,7 +9,17 @@ const cors = require('cors');
 const cloudinary = require('cloudinary').v2; // <-- NEW
 
 const app = express();
-app.use(cors({ origin: '*' }));
+app.use(
+  cors({
+    origin: [
+      'http://localhost:3000', // dev
+      'https://your-app.vercel.app', // <-- replace with your real domain
+      'https://fanbox-e0056.firebaseapp.com',
+    ],
+    methods: ['GET', 'POST', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'X-User-Id'],
+  }),
+);
 
 // ---------- CONFIGURE CLOUDINARY (use env vars!) ----------
 cloudinary.config({
