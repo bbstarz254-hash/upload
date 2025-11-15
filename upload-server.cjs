@@ -84,7 +84,25 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     res.status(500).json({ error: 'Upload failed' });
   }
 });
+app.get('/proxy', async (req, res) => {
+  const { url } = req.query;
+  if (!url?.includes('res.cloudinary.com'))
+    return res.status(400).send('Invalid');
 
+  try {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error('Fetch failed');
+    const blob = await response.blob();
+    res.set('Content-Type', blob.type);
+    res.set(
+      'Content-Disposition',
+      `attachment; filename="${decodeURIComponent(url.split('/').pop())}"`,
+    );
+    response.body.pipe(res);
+  } catch (err) {
+    res.status(500).send('Download failed');
+  }
+});
 // ---------- HEALTH ----------
 app.get('/health', (req, res) => res.send('OK'));
 
