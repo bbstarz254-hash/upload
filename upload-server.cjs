@@ -7,7 +7,6 @@ const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
-require('dotenv').config();
 
 const app = express();
 app.use(cors({ origin: '*' }));
