@@ -1,15 +1,17 @@
 // ---------------------------------------------------
-// upload-server.cjs (Cloudinary version – FREE persistent storage)
+// upload-server.cjs (Cloudinary version – PUBLIC uploads)
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
 const cors = require('cors');
-const cloudinary = require('cloudinary').v2; // <-- NEW
+const cloudinary = require('cloudinary').v2;
+require('dotenv').config();
 
 const app = express();
 app.use(cors({ origin: '*' }));
+app.use(express.json());
 
 // ---------- CONFIGURE CLOUDINARY (use env vars!) ----------
 cloudinary.config({
@@ -23,11 +25,9 @@ app.get('/', (req, res) => {
   res.send(`
     <h1>Upload Server + Cloudinary 🚀</h1>
     <p><strong>POST</strong> files to: <code>/upload</code></p>
-    <p>Files stored forever on Cloudinary (free tier)</p>
+    <p>Files stored on Cloudinary (public delivery)</p>
   `);
 });
-
-app.use(express.json());
 
 // ---------- TEMP STORAGE (multer still saves temp file) ----------
 const uploadDir = path.join(__dirname, 'temp_uploads');
@@ -37,90 +37,74 @@ const storage = multer.diskStorage({
   destination: (req, file, cb) => cb(null, uploadDir),
   filename: (req, file, cb) => {
     const uid = req.headers['x-user-id'] || 'anon';
-    const ext = path.extname(file.originalname);
+    const ext = path.extname(file.originalname) || '';
     cb(null, `${Date.now()}-${uid}${ext}`);
   },
 });
 
+// Simple, conservative MIME whitelist
+const ALLOWED_MIME = [
+  'image/jpeg',
+  'image/jpg',
+  'image/png',
+  'image/gif',
+  'image/webp',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/plain',
+  'text/csv',
+  'video/mp4',
+  'video/webm',
+  'video/quicktime',
+  'audio/mpeg',
+  'audio/wav',
+  'audio/ogg',
+];
+
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB (Cloudinary free limit)
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
   fileFilter: (req, file, cb) => {
-    const allowed = /jpeg|jpg|png|gif|webp|pdf|docx|txt|mp4|webm|mp3|mov/;
-    cb(null, allowed.test(file.mimetype));
+    const ok = ALLOWED_MIME.includes(file.mimetype);
+    cb(null, ok);
   },
 });
 
-// ---------- UPLOAD ENDPOINT (now uses Cloudinary) ----------
 // ---------- UPLOAD ENDPOINT (PUBLIC URL) ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No file' });
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
+    // Upload to Cloudinary as public (type: 'upload' is the public default)
     const result = await cloudinary.uploader.upload(req.file.path, {
-      resource_type: 'auto', // PDF, video, docx, etc.
+      resource_type: 'auto', // detects images, videos, raw (pdf/docx) automatically
       folder: 'yourapp_uploads',
-      // IMPORTANT: Make the asset PUBLIC
-      access_mode: 'public', // <-- ADD THIS
-      // OR use: type: 'upload' (default is public)
+      type: 'upload', // explicit: public delivery
     });
 
-    // Clean up temp file
-    fs.unlinkSync(req.file.path);
-
-    // RETURN A **PUBLIC** URL (no signature needed)
-    const publicUrl = result.secure_url; // safe because access_mode: 'public'
-
+    // Return useful metadata to client
     res.json({
-      url: publicUrl,
-      name: req.file.originalname,
+      url: result.secure_url, // public HTTPS URL (CDN)
+      public_id: result.public_id, // Cloudinary public_id (folder + name)
+      resource_type: result.resource_type,
+      original_filename: req.file.originalname,
     });
   } catch (err) {
     console.error('Cloudinary upload error:', err);
-    // Optional: clean up on error
-    if (req.file?.path && fs.existsSync(req.file.path)) {
-      fs.unlinkSync(req.file.path);
-    }
     res.status(500).json({ error: 'Upload failed' });
+  } finally {
+    // Always try to remove the temp file if it exists
+    try {
+      if (req.file?.path && fs.existsSync(req.file.path)) {
+        fs.unlinkSync(req.file.path);
+      }
+    } catch (e) {
+      console.warn('Failed to remove temp file:', e);
+    }
   }
 });
-// ---------- PROXY DOWNLOAD (FIXED: Handles 401 + Streams) ----------
-// ---------- PROXY WITH SIGNED URL (For Private Files) ----------
-app.get('/proxy', async (req, res) => {
-  const { url } = req.query;
-  if (!url?.includes('res.cloudinary.com')) {
-    return res.status(400).json({ error: 'Invalid URL' });
-  }
 
-  try {
-    // Parse public_id and resource_type from URL
-    const publicId = url.split('/upload/')[1]?.split('/')[0]; // e.g., "v123/yourapp_uploads/filename"
-    const resourceType = url.includes('/image/upload/')
-      ? 'image'
-      : url.includes('/video/upload/')
-      ? 'video'
-      : 'raw'; // For PDF/DOCX
-
-    if (!publicId) throw new Error('Invalid Cloudinary URL');
-
-    // Generate SIGNED URL (expires in 1 hour)
-    const signedUrl = cloudinary.utils.private_download_url(
-      publicId,
-      'pdf', // Or detect from URL
-      {
-        resource_type: resourceType,
-        attachment: true, // Force download
-        expires_at: Math.floor(Date.now() / 1000) + 3600, // 1 hour
-      },
-    );
-
-    // Redirect to signed URL (simple & secure)
-    res.redirect(302, signedUrl);
-  } catch (err) {
-    console.error('[Proxy] Signed URL error:', err);
-    res.status(500).json({ error: 'Download failed' });
-  }
-});
 // ---------- HEALTH ----------
 app.get('/health', (req, res) => res.send('OK'));
 
