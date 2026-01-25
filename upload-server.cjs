@@ -108,7 +108,33 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
   }
 });
+// ---------- DELETE ENDPOINT ----------
+app.delete('/delete', async (req, res) => {
+  const { public_id, resource_type = 'image' } = req.body;
 
+  if (!public_id) {
+    return res.status(400).json({ error: 'public_id is required' });
+  }
+
+  try {
+    const result = await cloudinary.uploader.destroy(public_id, {
+      resource_type, // 'image', 'video', 'raw' — must match what was used on upload
+      invalidate: true, // Optional but recommended: removes CDN cache faster
+      type: 'upload', // Usually correct for your setup
+    });
+
+    if (result.result === 'ok') {
+      res.json({ message: 'File deleted successfully', result });
+    } else {
+      res
+        .status(404)
+        .json({ error: 'File not found or already deleted', result });
+    }
+  } catch (err) {
+    console.error('Cloudinary delete error:', err);
+    res.status(500).json({ error: 'Delete failed', details: err.message });
+  }
+});
 // ---------- HEALTH ----------
 app.get('/health', (req, res) => res.send('OK'));
 
