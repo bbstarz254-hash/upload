@@ -1,10 +1,11 @@
 // ---------------------------------------------------
-// upload-server.cjs (Cloudinary version – PUBLIC uploads)
+// upload-server.cjs (Cloudinary images + Bunny Stream video)
 // ---------------------------------------------------
 const express = require('express');
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const cors = require('cors');
 const cloudinary = require('cloudinary').v2;
 
@@ -19,12 +20,17 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET || 'your_api_secret',
 });
 
+// ---------- CONFIGURE BUNNY STREAM ----------
+const BUNNY_LIBRARY_ID = process.env.BUNNY_LIBRARY_ID || '';
+const BUNNY_STREAM_API_KEY = process.env.BUNNY_STREAM_API_KEY || '';
+
 // ---------- HOME PAGE ----------
 app.get('/', (req, res) => {
   res.send(`
-    <h1>Upload Server + Cloudinary 🚀</h1>
-    <p><strong>POST</strong> files to: <code>/upload</code></p>
-    <p>Files stored on Cloudinary with public delivery</p>
+    <h1>Upload Server + Cloudinary + Bunny Stream 🚀</h1>
+    <p><strong>POST</strong> images to: <code>/upload</code></p>
+    <p><strong>POST</strong> to <code>/bunny/create</code> to authorize a video (TUS) upload</p>
+    <p><strong>POST</strong> to <code>/bunny/delete</code> to remove a Bunny video</p>
   `);
 });
 
@@ -52,9 +58,6 @@ const ALLOWED_MIME = [
   'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   'text/plain',
   'text/csv',
-  'video/mp4',
-  'video/webm',
-  'video/quicktime',
   'audio/mpeg',
   'audio/wav',
   'audio/ogg',
@@ -62,16 +65,16 @@ const ALLOWED_MIME = [
 
 const upload = multer({
   storage,
-  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB
+  limits: { fileSize: 100 * 1024 * 1024 }, // 100 MB — images/docs/audio only, video no longer goes through this route
   fileFilter: (req, file, cb) => cb(null, ALLOWED_MIME.includes(file.mimetype)),
 });
 
-// ---------- UPLOAD ENDPOINT (PUBLIC URL) ----------
+// ---------- UPLOAD ENDPOINT (PUBLIC URL) — images / docs / audio ----------
 app.post('/upload', upload.single('file'), async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    // Detect type automatically for images, videos, docs
+    // Detect type automatically for images, docs, audio
     let resourceType = 'auto';
     const docTypes = [
       'application/pdf',
@@ -108,7 +111,8 @@ app.post('/upload', upload.single('file'), async (req, res) => {
     }
   }
 });
-// ---------- DELETE ENDPOINT ----------
+
+// ---------- DELETE ENDPOINT (Cloudinary — images/docs/audio) ----------
 app.delete('/delete', async (req, res) => {
   const { public_id, resource_type = 'image' } = req.body;
 
@@ -135,6 +139,114 @@ app.delete('/delete', async (req, res) => {
     res.status(500).json({ error: 'Delete failed', details: err.message });
   }
 });
+
+// ---------- BUNNY STREAM: CREATE VIDEO + SIGNED TUS AUTH ----------
+app.post('/bunny/create', async (req, res) => {
+  if (!BUNNY_LIBRARY_ID || !BUNNY_STREAM_API_KEY) {
+    return res
+      .status(500)
+      .json({ error: 'Bunny Stream is not configured on the server' });
+  }
+
+  try {
+    const { title } = req.body || {};
+
+    const createRes = await fetch(
+      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos`,
+      {
+        method: 'POST',
+        headers: {
+          AccessKey: BUNNY_STREAM_API_KEY,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ title: title || 'Untitled video' }),
+      },
+    );
+
+    const data = await createRes.json();
+    if (!createRes.ok || !data.guid) {
+      console.error('Bunny create failed:', data);
+      return res
+        .status(500)
+        .json({ error: 'Failed to create Bunny video', data });
+    }
+
+    const videoId = data.guid;
+    const expiration = Math.floor(Date.now() / 1000) + 3600; // 1 hour
+    const signature = crypto
+      .createHash('sha256')
+      .update(BUNNY_LIBRARY_ID + BUNNY_STREAM_API_KEY + expiration + videoId)
+      .digest('hex');
+
+    res.json({
+      videoId,
+      libraryId: BUNNY_LIBRARY_ID,
+      expiration,
+      signature,
+    });
+  } catch (err) {
+    console.error('Bunny create error:', err);
+    res.status(500).json({ error: 'Bunny create failed' });
+  }
+});
+
+// ---------- BUNNY STREAM: DELETE VIDEO ----------
+app.post('/bunny/delete', async (req, res) => {
+  if (!BUNNY_LIBRARY_ID || !BUNNY_STREAM_API_KEY) {
+    return res
+      .status(500)
+      .json({ error: 'Bunny Stream is not configured on the server' });
+  }
+
+  try {
+    const { videoId } = req.body || {};
+    if (!videoId) return res.status(400).json({ error: 'videoId required' });
+
+    const delRes = await fetch(
+      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`,
+      {
+        method: 'DELETE',
+        headers: { AccessKey: BUNNY_STREAM_API_KEY },
+      },
+    );
+
+    if (!delRes.ok) {
+      const text = await delRes.text();
+      console.error('Bunny delete failed:', text);
+      return res.status(500).json({ error: 'Bunny delete failed', text });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Bunny delete error:', err);
+    res.status(500).json({ error: 'Bunny delete failed' });
+  }
+});
+
+// ---------- BUNNY STREAM: VIDEO STATUS (optional — poll encoding progress) ----------
+app.get('/bunny/status/:videoId', async (req, res) => {
+  if (!BUNNY_LIBRARY_ID || !BUNNY_STREAM_API_KEY) {
+    return res
+      .status(500)
+      .json({ error: 'Bunny Stream is not configured on the server' });
+  }
+
+  try {
+    const { videoId } = req.params;
+    const statusRes = await fetch(
+      `https://video.bunnycdn.com/library/${BUNNY_LIBRARY_ID}/videos/${videoId}`,
+      { headers: { AccessKey: BUNNY_STREAM_API_KEY } },
+    );
+    const data = await statusRes.json();
+    if (!statusRes.ok) {
+      return res.status(500).json({ error: 'Bunny status failed', data });
+    }
+    res.json(data);
+  } catch (err) {
+    console.error('Bunny status error:', err);
+    res.status(500).json({ error: 'Bunny status failed' });
+  }
+});
+
 // ---------- HEALTH ----------
 app.get('/health', (req, res) => res.send('OK'));
 
