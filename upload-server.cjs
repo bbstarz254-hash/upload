@@ -189,7 +189,33 @@ app.post('/bunny/create', async (req, res) => {
     res.status(500).json({ error: 'Bunny create failed' });
   }
 });
+app.post('/bunny/resume', async (req, res) => {
+  if (!BUNNY_LIBRARY_ID || !BUNNY_STREAM_API_KEY) {
+    return res
+      .status(500)
+      .json({ error: 'Bunny Stream is not configured on the server' });
+  }
+  try {
+    const { videoId } = req.body || {};
+    if (!videoId) return res.status(400).json({ error: 'videoId required' });
 
+    const expiration = Math.floor(Date.now() / 1000) + 3600;
+    const signature = crypto
+      .createHash('sha256')
+      .update(BUNNY_LIBRARY_ID + BUNNY_STREAM_API_KEY + expiration + videoId)
+      .digest('hex');
+
+    res.json({
+      videoId,
+      libraryId: BUNNY_LIBRARY_ID,
+      expiration,
+      signature,
+    });
+  } catch (err) {
+    console.error('Bunny resume error:', err);
+    res.status(500).json({ error: 'Bunny resume failed' });
+  }
+});
 // ---------- BUNNY STREAM: DELETE VIDEO ----------
 app.post('/bunny/delete', async (req, res) => {
   if (!BUNNY_LIBRARY_ID || !BUNNY_STREAM_API_KEY) {
